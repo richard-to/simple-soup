@@ -1,8 +1,16 @@
 {
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "parcel client/index.html -p 8080"
+  },
   "dependencies": {
     "express": "^4.17.1",
     "mediasoup": "^3.8.3",
+    "mediasoup-client": "^3.6.37",
     "protoo-client": "^4.0.6",
     "protoo-server": "^4.0.6"
+  },
+  "devDependencies": {
+    "parcel": "^2.0.0-rc.0"
   }
 }
