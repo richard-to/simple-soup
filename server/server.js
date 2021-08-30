@@ -4,6 +4,8 @@ const express = require('express')
 const mediasoup = require('mediasoup')
 const protoo = require('protoo-server')
 
+const Room = require('./room')
+
 let httpServer
 let appServer
 let socketServer
@@ -22,6 +24,7 @@ async function run() {
 }
 
 async function runMediasoupWorker() {
+  console.info('Running media soup worker...')
   mediasoupWorker = await mediasoup.createWorker({
     logLevel: 'warn',
     logTags: [
@@ -56,6 +59,8 @@ async function runMediasoupWorker() {
 }
 
 async function createAppServer() {
+  console.info('Running app server...')
+
   appServer = express()
   appServer.use(express.json())
 
@@ -174,14 +179,16 @@ async function createAppServer() {
 }
 
 async function runHttpServer() {
+  console.info('Running http server...')
   httpServer = http.createServer(appServer)
   await new Promise((resolve) => {
-    httpServer.listen(8080, 'localhost', resolve)
+    httpServer.listen(8000, 'localhost', resolve)
   })
 }
 
 async function runSocketServer() {
-  // Create the protoo WebSocket server.
+  console.info('Running web socket server...')
+
   socketServer = new protoo.WebSocketServer(httpServer, {
     maxReceivedFrameSize     : 960000, // 960 KBytes.
     maxReceivedMessageSize   : 960000,
@@ -189,19 +196,19 @@ async function runSocketServer() {
     fragmentationThreshold   : 960000
   })
 
-  const baseURL = `${req.protocol}://${req.headers.host}/`
-  const url = new URL(req.url, baseURL)
-  const peerId  = url.searchParams['peerId']
+  socketServer.on('connectionrequest', (info, accept, reject) => {
+    const url = new URL(info.request.url, info.request.headers.origin)
+    const peerId  = url.searchParams.get('peerId')
+    if (!peerId) {
+      reject(400, 'Connection request without peerId')
+      return
+    }
 
-  if (!peerId) {
-    reject(400, 'Connection request without peerId')
-    return
-  }
-
-  try {
-    room.handleProtooConnection({ peerId, accept() })
-  } catch (error) {
-    console.error('Room creation or room joining failed: %o', error)
-    reject(error)
-  }
+    try {
+      room.handleProtooConnection({ peerId, consume: true, protooWebSocketTransport: accept() })
+    } catch (error) {
+      console.error('Room creation or room joining failed: %o', error)
+      reject(error)
+    }
+  })
 }

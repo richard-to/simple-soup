@@ -24,8 +24,6 @@ class Room extends EventEmitter {
     //   - {Map<String, mediasoup.Transport>} transports
     //   - {Map<String, mediasoup.Producer>} producers
     //   - {Map<String, mediasoup.Consumers>} consumers
-    //   - {Map<String, mediasoup.DataProducer>} dataProducers
-    //   - {Map<String, mediasoup.DataConsumers>} dataConsumers
     this._broadcasters = new Map()
   }
 
@@ -88,6 +86,7 @@ class Room extends EventEmitter {
   }
 
   async createBroadcaster({ id, rtpCapabilities }) {
+    console.debug('Create broadcaster')
     if (this._broadcasters.has(id)) {
       throw new Error(`broadcaster with id "${id}" already exists`)
     }
@@ -99,8 +98,6 @@ class Room extends EventEmitter {
         transports    : new Map(),
         producers     : new Map(),
         consumers     : new Map(),
-        dataProducers : new Map(),
-        dataConsumers : new Map()
       }
     }
 
@@ -157,19 +154,19 @@ class Room extends EventEmitter {
 
   async createBroadcasterTransport({ broadcasterId, sctpCapabilities }) {
     const broadcaster = this._broadcasters.get(broadcasterId)
-
+    console.debug('Create broadcaster transport')
     if (!broadcaster) {
       throw new Error(`broadcaster with id "${broadcasterId}" does not exist`)
     }
 
     const webRtcTransportOptions = {
-			listenIps: [
-				{
-					ip: 'localhost',
-				}
-			],
-			initialAvailableOutgoingBitrate : 1000000,
-			maxSctpMessageSize: 262144,
+      listenIps: [
+        {
+          ip: '127.0.0.1',
+        }
+      ],
+      initialAvailableOutgoingBitrate : 1000000,
+      maxSctpMessageSize: 262144,
       enableSctp: Boolean(sctpCapabilities),
       numSctpStreams: (sctpCapabilities || {}).numStreams,
     }
@@ -187,6 +184,7 @@ class Room extends EventEmitter {
   }
 
   async connectBroadcasterTransport({ broadcasterId, transportId, dtlsParameters }) {
+    console.debug("Connect broadcaster transport")
     const broadcaster = this._broadcasters.get(broadcasterId)
     if (!broadcaster) {
       throw new Error(`broadcaster with id "${broadcasterId}" does not exist`)
@@ -205,6 +203,7 @@ class Room extends EventEmitter {
     kind,
     rtpParameters
   }) {
+    console.debug("Connect broadcaster producer")
     const broadcaster = this._broadcasters.get(broadcasterId)
 
     if (!broadcaster) {
@@ -277,133 +276,12 @@ class Room extends EventEmitter {
     }
   }
 
-  async createBroadcasterDataConsumer({ broadcasterId, transportId, dataProducerId }) {
-    const broadcaster = this._broadcasters.get(broadcasterId)
-
-    if (!broadcaster) {
-      throw new Error(`broadcaster with id "${broadcasterId}" does not exist`)
-    }
-
-    if (!broadcaster.data.rtpCapabilities) {
-      throw new Error('broadcaster does not have rtpCapabilities')
-    }
-
-    const transport = broadcaster.data.transports.get(transportId)
-
-    if (!transport) {
-      throw new Error(`transport with id "${transportId}" does not exist`)
-    }
-
-    const dataConsumer = await transport.consumeData({ dataProducerId })
-
-    broadcaster.data.dataConsumers.set(dataConsumer.id, dataConsumer)
-
-    dataConsumer.on('transportclose', () => {
-      broadcaster.data.dataConsumers.delete(dataConsumer.id)
-    })
-
-    dataConsumer.on('dataproducerclose', () => {
-      broadcaster.data.dataConsumers.delete(dataConsumer.id)
-    })
-
-    return {
-      id       : dataConsumer.id,
-      streamId : dataConsumer.sctpStreamParameters.streamId,
-    }
-  }
-
-  async createBroadcasterDataProducer({
-    broadcasterId,
-    transportId,
-    label,
-    protocol,
-    sctpStreamParameters,
-    appData,
-  }) {
-    const broadcaster = this._broadcasters.get(broadcasterId)
-    if (!broadcaster) {
-      throw new Error(`broadcaster with id "${broadcasterId}" does not exist`)
-    }
-
-    const transport = broadcaster.data.transports.get(transportId)
-    if (!transport) {
-      throw new Error(`transport with id "${transportId}" does not exist`)
-    }
-
-    const dataProducer = await transport.produceData({
-      sctpStreamParameters,
-      label,
-      protocol,
-      appData,
-    })
-    broadcaster.data.dataProducers.set(dataProducer.id, dataProducer)
-
-    dataProducer.on('transportclose', () => {
-      broadcaster.data.dataProducers.delete(dataProducer.id)
-    })
-
-    return { id : dataProducer.id }
-  }
-
   _getJoinedPeers({ excludePeer = undefined } = {}) {
     return this._room.peers.filter((peer) => peer.data.joined && peer !== excludePeer)
   }
 
-  async _createDataConsumer({ dataConsumerPeer, dataProducerPeer = null, dataProducer }) {
-    if (!dataConsumerPeer.data.sctpCapabilities) {
-      return;
-    }
-
-    // Must take the Transport the remote Peer is using for consuming.
-    const transport = Array.from(dataConsumerPeer.data.transports.values())
-      .find((t) => t.appData.consuming)
-
-    if (!transport) {
-      console.warn('_createDataConsumer() | Transport for consuming not found')
-      return
-    }
-
-    let dataConsumer
-
-    try {
-      dataConsumer = await transport.consumeData({
-        dataProducerId : dataProducer.id
-      })
-    }
-    catch (error) {
-      console.warn('_createDataConsumer() | transport.consumeData():%o', error)
-      return
-    }
-
-    dataConsumerPeer.data.dataConsumers.set(dataConsumer.id, dataConsumer)
-
-    dataConsumer.on('transportclose', () => {
-      dataConsumerPeer.data.dataConsumers.delete(dataConsumer.id)
-    })
-
-    dataConsumer.on('dataproducerclose', () => {
-      dataConsumerPeer.data.dataConsumers.delete(dataConsumer.id)
-      dataConsumerPeer.notify(
-        'dataConsumerClosed', { dataConsumerId: dataConsumer.id })
-        .catch(() => {})
-    })
-
-    try {
-      await dataConsumerPeer.request('newDataConsumer', {
-        peerId: dataProducerPeer.id,
-        dataProducerId: dataProducer.id,
-        id: dataConsumer.id,
-        sctpStreamParameters : dataConsumer.sctpStreamParameters,
-        label: dataConsumer.label,
-        protocol: dataConsumer.protocol,
-        appData: dataProducer.appData,
-      })
-    } catch (error) {
-      console.warn('_createDataConsumer() | failed:%o', error)
-    }
-  }
-
   async _handleRequest(peer, request, accept, reject) {
+    console.log("HR " + peer.id + " " + request.method,)
     switch (request.method) {
       case 'getRouterRtpCapabilities': {
         accept(this._mediasoupRouter.rtpCapabilities)
@@ -447,15 +325,6 @@ class Room extends EventEmitter {
               producer,
             })
           }
-
-          // Create DataConsumers for existing DataProducers.
-          for (const dataProducer of joinedPeer.data.dataProducers.values()) {
-            this._createDataConsumer({
-              dataConsumerPeer: peer,
-              dataProducerPeer: joinedPeer,
-              dataProducer,
-            })
-          }
         }
 
         // Notify the new Peer to all other Peers.
@@ -476,7 +345,14 @@ class Room extends EventEmitter {
         } = request.data
 
         const webRtcTransportOptions = {
-          ...config.mediasoup.webRtcTransportOptions,
+          listenIps: [
+            {
+              ip: '127.0.0.1',
+            }
+          ],
+          initialAvailableOutgoingBitrate: 1000000,
+          minimumAvailableOutgoingBitrate: 600000,
+          maxSctpMessageSize: 262144,
           enableSctp     : Boolean(sctpCapabilities),
           numSctpStreams : (sctpCapabilities || {}).numStreams,
           appData        : { producing, consuming },
@@ -558,11 +434,6 @@ class Room extends EventEmitter {
         // Store the Producer into the protoo Peer data Object.
         peer.data.producers.set(producer.id, producer)
 
-        // Set Producer events.
-        producer.on('score', (score) => {
-          peer.notify('producerScore', { producerId: producer.id, score }).catch(() => {})
-        })
-
         accept({ id: producer.id })
 
         // Optimization: Create a server-side Consumer for each Peer.
@@ -598,53 +469,55 @@ class Room extends EventEmitter {
 
         break
       }
+    }
+  }
 
-      case 'produceData': {
-        if (!peer.data.joined) {
-          throw new Error('Peer not yet joined');
-        }
+  async _createConsumer({ consumerPeer, producerPeer, producer }) {
 
-        const {
-          transportId,
-          sctpStreamParameters,
-          label,
-          protocol,
-          appData
-        } = request.data
+    // Must take the Transport the remote Peer is using for consuming.
+    const transport = Array.from(consumerPeer.data.transports.values())
+      .find((t) => t.appData.consuming)
 
-        const transport = peer.data.transports.get(transportId)
+    if (!transport) {
+      console.warn('_createConsumer() | Transport for consuming not found')
+      return
+    }
 
-        if (!transport) {
-          throw new Error(`transport with id "${transportId}" not found`)
-        }
+    let consumer
 
-        const dataProducer = await transport.produceData({
-          sctpStreamParameters,
-          label,
-          protocol,
-          appData,
-        })
+    try {
+      consumer = await transport.consume({
+        producerId: producer.id,
+        rtpCapabilities: consumerPeer.data.rtpCapabilities,
+        paused: false
+      })
+    } catch (error) {
+      console.warn('_createConsumer() | transport.consume():%o', error)
+      return
+    }
 
-        // Store the Producer into the protoo Peer data Object.
-        peer.data.dataProducers.set(dataProducer.id, dataProducer)
+    consumerPeer.data.consumers.set(consumer.id, consumer)
+    consumer.on('transportclose', () => {
+      consumerPeer.data.consumers.delete(consumer.id)
+    })
 
-        accept({ id: dataProducer.id })
+    consumer.on('producerclose', () => {
+      consumerPeer.data.consumers.delete(consumer.id)
+      consumerPeer.notify('consumerClosed', { consumerId: consumer.id }).catch(() => {})
+    })
 
-        switch (dataProducer.label) {
-          case 'chat': {
-            // Create a server-side DataConsumer for each Peer.
-            for (const otherPeer of this._getJoinedPeers({ excludePeer: peer })) {
-              this._createDataConsumer({
-                dataConsumerPeer : otherPeer,
-                dataProducerPeer : peer,
-                dataProducer,
-              })
-            }
-            break
-          }
-        }
-        break
-      }
+    try {
+      await consumerPeer.request('newConsumer', {
+        peerId: producerPeer.id,
+        producerId: producer.id,
+        id: consumer.id,
+        kind: consumer.kind,
+        rtpParameters: consumer.rtpParameters,
+        type: consumer.type,
+        appData: producer.appData,
+      })
+    } catch (error) {
+      console.warn('_createConsumer() | failed:%o', error)
     }
   }
 }
