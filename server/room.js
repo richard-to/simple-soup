@@ -281,7 +281,6 @@ class Room extends EventEmitter {
   }
 
   async _handleRequest(peer, request, accept, reject) {
-    console.log("HR " + peer.id + " " + request.method,)
     switch (request.method) {
       case 'getRouterRtpCapabilities': {
         accept(this._mediasoupRouter.rtpCapabilities)
